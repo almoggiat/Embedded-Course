@@ -2,6 +2,8 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <unistd.h>
+#include <sys/types.h>
+
 
 void print_file(const char* path) {
     FILE* file = fopen(path, "r");
@@ -47,9 +49,53 @@ int make_dir(void) {
     return 0;
 }
 
+
+extern char **environ;
+
+int make_proc(int num) {
+    char *path;
+
+    if (num == 0) {
+        path = "./bin/mem_sensor";
+    }
+    else if (num == 1) {
+        path = "./bin/cpu_sensor";
+    }
+    else if (num == 2) {
+        path = "./bin/proc_sensor";
+    }
+    else {
+        return 1;
+    }
+
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        perror("fork");
+        return 1;
+    }
+
+    if (pid == 0) {
+        char *args[] = {path, NULL};
+
+        execve(path, args, environ);
+
+        perror("execve");
+        _exit(1);
+    }
+
+    return 0;
+}
+
 int main(void) {
     if (make_dir() != 0) {
         return 1;
+    }
+    for (int k = 0; k<3;){
+      if (make_proc(k) == 0){
+	k++;
+      }
+
     }
 
     while (1) {
