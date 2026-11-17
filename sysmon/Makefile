@@ -1,21 +1,18 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -g
+CFLAGS = -Wall -Wextra -g -pthread
 
-SRC_DIR = src
-BIN_DIR = bin
+TARGET = bin/sysmond
+SOURCES = src/sysmond.c src/mem_sensor.c src/cpu_sensor.c src/proc_sensor.c
 
-TARGETS = $(BIN_DIR)/sysmond $(BIN_DIR)/mem_sensor \
-          $(BIN_DIR)/cpu_sensor $(BIN_DIR)/proc_sensor
+all: $(TARGET)
 
-all: $(TARGETS)
+$(TARGET): $(SOURCES) src/sysmond.h | bin
+	$(CC) $(CFLAGS) $(SOURCES) -o $(TARGET)
 
-$(BIN_DIR)/%: $(SRC_DIR)/%.c | $(BIN_DIR)
-	$(CC) $(CFLAGS) $< -o $@
-
-$(BIN_DIR):
-	mkdir -p $(BIN_DIR)
+bin:
+	mkdir -p bin
 
 clean:
-	rm -f $(TARGETS)
+	rm -f $(TARGET)
 
 .PHONY: all clean

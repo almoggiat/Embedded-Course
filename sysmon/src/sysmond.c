@@ -1,105 +1,105 @@
 #include <stdio.h>
-#include <sys/stat.h>
-#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
-#include <sys/types.h>
+#include "sysmond.h"
 
+void get_data(SystemData* data) {
+    int mem[5];
+    double cpu[3];
+    int process_count;
+    bool mem_ready;
+    bool cpu_ready;
+    bool proc_ready;
 
-void print_file(const char* path) {
-    FILE* file = fopen(path, "r");
+    // Copy the shared values while holding the mutex.
+    pthread_mutex_lock(&data->mutex);
 
-    if (file == NULL) {
-        perror(path);
-        return;
+    for (int i = 0; i < 5; i++) {
+        mem[i] = data->mem_info[i];
     }
 
-    char line[256];
-
-    while (fgets(line, sizeof(line), file) != NULL) {
-        printf("%s", line);
+    for (int i = 0; i < 3; i++) {
+        cpu[i] = data->cpu_info[i];
     }
 
-    if (ferror(file)) {
-        perror("read file");
-    }
+    process_count = data->process_count;
 
-    fclose(file);
-}
+    mem_ready = data->mem_ready;
+    cpu_ready = data->cpu_ready;
+    proc_ready = data->proc_ready;
 
-void get_data(void) {
+    pthread_mutex_unlock(&data->mutex);
+
+    // Print the local copies after releasing the mutex.
     printf("Memory data:\n");
-    print_file("/tmp/sysmon/mem.dat");
+
+    if (mem_ready) {
+        const char* phrases[5] = {
+            "MemTotal:",
+            "MemFree:",
+            "MemAvailable:",
+            "SwapTotal:",
+            "SwapFree:"
+        };
+
+        for (int i = 0; i < 5; i++) {
+            printf("%s %d kB\n", phrases[i], mem[i]);
+        }
+    } else {
+        printf("Waiting for memory sensor...\n");
+    }
 
     printf("\nCPU load averages:\n");
-    print_file("/tmp/sysmon/cpu.dat");
+
+    if (cpu_ready) {
+        printf("1-minute load average: %.2f\n", cpu[0]);
+        printf("5-minute load average: %.2f\n", cpu[1]);
+        printf("15-minute load average: %.2f\n", cpu[2]);
+    } else {
+        printf("Waiting for CPU sensor...\n");
+    }
 
     printf("\nProcesses data:\n");
-    print_file("/tmp/sysmon/proc.dat");
+
+    if (proc_ready) {
+        printf("Total processes: %d\n", process_count);
+    } else {
+        printf("Waiting for process sensor...\n");
+    }
 
     printf("\n------------------------\n");
     fflush(stdout);
 }
 
-int make_dir(void) {
-    if (mkdir("/tmp/sysmon", 0755) == -1 && errno != EEXIST) {
-        perror("mkdir");
-        return 1;
-    }
-
-    return 0;
-}
-
-
-extern char **environ;
-
-int make_proc(int num) {
-    char *path;
-
-    if (num == 0) {
-        path = "./bin/mem_sensor";
-    }
-    else if (num == 1) {
-        path = "./bin/cpu_sensor";
-    }
-    else if (num == 2) {
-        path = "./bin/proc_sensor";
-    }
-    else {
-        return 1;
-    }
-
-    pid_t pid = fork();
-
-    if (pid < 0) {
-        perror("fork");
-        return 1;
-    }
-
-    if (pid == 0) {
-        char *args[] = {path, NULL};
-
-        execve(path, args, environ);
-
-        perror("execve");
-        _exit(1);
-    }
-
-    return 0;
-}
-
 int main(void) {
-    if (make_dir() != 0) {
-        return 1;
-    }
-    for (int k = 0; k<3;){
-      if (make_proc(k) == 0){
-	k++;
-      }
+    SystemData data = {0};
+    pthread_t threads[3];
 
+    int rc = pthread_mutex_init(&data.mutex, NULL);
+
+    if (rc != 0) {
+        fprintf(stderr, "pthread_mutex_init: %s\n", strerror(rc));
+        return EXIT_FAILURE;
+    }
+
+    void* (*sensors[3])(void*) = {
+        mem_sensor,
+        cpu_sensor,
+        proc_sensor
+    };
+
+    for (int i = 0; i < 3; i++) {
+        rc = pthread_create(&threads[i], NULL, sensors[i], &data);
+
+        if (rc != 0) {
+            fprintf(stderr, "pthread_create: %s\n", strerror(rc));
+            exit(EXIT_FAILURE);
+        }
     }
 
     while (1) {
-        get_data();
+        get_data(&data);
         sleep(5);
     }
 
