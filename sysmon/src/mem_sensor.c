@@ -1,91 +1,93 @@
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <errno.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <string.h>
+#include <signal.h>
 
-int get_int_from_str(const char* string) {
-    for (size_t i = 0; string[i] != '\0'; i++) {
-        if (string[i] >= '0' && string[i] <= '9') {
-            return atoi(string + i);
-        }
-    }
+#include <sysmon_ipc.h>
 
-    return 0;
-}
 
-void read_mem(void) {
-    FILE* mem_file = fopen("/proc/meminfo", "r");
+int read_mem(int pipe_fd) {
+    FILE *mem_file = fopen("/proc/meminfo", "r");
 
     if (mem_file == NULL) {
         perror("fopen meminfo");
-        return;
+        return 1;
     }
 
-    int mem_info[5] = {0};
-
-    const char* phrases[5] = {
-        "MemTotal:",
-        "MemFree:",
-        "MemAvailable:",
-        "SwapTotal:",
-        "SwapFree:"
-    };
-
-    int line_numbers[5] = {1, 2, 3, 15, 16};
+    MemData data = {0};
 
     char line[256];
-    int counter = 0;
 
-    for (int row = 1;
-         counter < 5 && fgets(line, sizeof(line), mem_file) != NULL;
-         row++) {
+    while (fgets(line, sizeof(line), mem_file) != NULL) {
 
-        if (row == line_numbers[counter]) {
-            mem_info[counter] = get_int_from_str(line);
-            counter++;
-        }
+        if (sscanf(line, "MemTotal: %ld", &data.mem_total) == 1)
+            continue;
+
+        if (sscanf(line, "MemFree: %ld", &data.mem_free) == 1)
+            continue;
+
+        if (sscanf(line, "MemAvailable: %ld", &data.mem_avail) == 1)
+            continue;
+
+        if (sscanf(line, "SwapTotal: %ld", &data.swap_total) == 1)
+            continue;
+
+        if (sscanf(line, "SwapFree: %ld", &data.swap_free) == 1)
+            continue;
     }
 
     fclose(mem_file);
 
-    if (counter < 5) {
-        fprintf(stderr, "Could not read all requested rows\n");
-        return;
-    }
+    // Send the entire structure through the pipe.
+    const char *ptr = (const char *)&data;
+    size_t remaining = sizeof(data);
 
-    FILE* outfile = fopen("/tmp/sysmon/mem.dat", "w");
+    while (remaining > 0) {
+        ssize_t written = write(pipe_fd, ptr, remaining);
 
-    if (outfile == NULL) {
-        perror("fopen mem.dat");
-        return;
-    }
+        if (written < 0) {
+            if (errno == EINTR)
+                continue;
 
-    for (int i = 0; i < 5; i++) {
-        fprintf(outfile, "%s %d kB\n", phrases[i], mem_info[i]);
-    }
+            perror("write pipe");
+            return 1;
+        }
 
-    fclose(outfile);
-}
+        if (written == 0) {
+            fprintf(stderr, "Pipe write returned 0\n");
+            return 1;
+        }
 
-int make_dir(void) {
-    if (mkdir("/tmp/sysmon", 0755) == -1 && errno != EEXIST) {
-        perror("mkdir");
-        return 1;
+        ptr += written;
+        remaining -= written;
     }
 
     return 0;
 }
 
-int main(void) {
-    if (make_dir() != 0) {
+
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        fprintf(stderr, "Missing pipe descriptor\n");
         return 1;
     }
 
+    int pipe_fd = atoi(argv[1]);
+
     while (1) {
-        read_mem();
+        if (read_mem(pipe_fd) != 0) {
+            close(pipe_fd);
+            return 1;
+        }
+
         sleep(5);
     }
 
+    close(pipe_fd);
     return 0;
 }

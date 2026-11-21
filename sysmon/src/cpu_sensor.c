@@ -1,91 +1,90 @@
+
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <errno.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <string.h>
+#include <sysmon_ipc.h>
 
-void read_cpu(void) {
-    FILE* cpu_file = fopen("/proc/loadavg", "r");
+
+int read_cpu(CpuData *data) {
+    FILE *cpu_file = fopen("/proc/loadavg", "r");
 
     if (cpu_file == NULL) {
         perror("fopen loadavg");
-        return;
+        return 1;
     }
 
-    const char* phrases[3] = {
-        "1-minute load average: ",
-        "5-minute load average: ",
-        "15-minute load average: "
-    };
-
-    char cpu_info[3][256] = {0};
-    char line[256];
-
-    if (fgets(line, sizeof(line), cpu_file) == NULL) {
-        fprintf(stderr, "Could not read loadavg\n");
-        fclose(cpu_file);
-        return;
-    }
+    int result = fscanf(cpu_file, "%lf %lf %lf",
+                        &data->load1,
+                        &data->load5,
+                        &data->load15);
 
     fclose(cpu_file);
 
-    int j = 0;
-    int k = 0; 
-
-    for (int i = 0; line[i] != '\0' && j < 3; i++) {
-        if (line[i] == ' ' || line[i] == '\t' || line[i] == '\n') {
-            if (k > 0) {
-                cpu_info[j][k] = '\0';
-                j++;
-                k = 0;
-            }
-        } else {
-            cpu_info[j][k] = line[i];
-            k++;
-        }
-    }
-
-    if (j < 3 && k > 0) {
-        cpu_info[j][k] = '\0';
-        j++;
-    }
-
-    if (j < 3) {
+    if (result != 3) {
         fprintf(stderr, "Could not read all three load averages\n");
-        return;
-    }
-
-    FILE* outfile = fopen("/tmp/sysmon/cpu.dat", "w");
-
-    if (outfile == NULL) {
-        perror("fopen cpu.dat");
-        return;
-    }
-
-    for (int i = 0; i < 3; i++) {
-        fprintf(outfile, "%s%s\n", phrases[i], cpu_info[i]);
-    }
-
-    fclose(outfile);
-}
-
-int make_dir(void) {
-    if (mkdir("/tmp/sysmon", 0755) == -1 && errno != EEXIST) {
-        perror("mkdir");
         return 1;
     }
 
     return 0;
 }
 
+
+int send_cpu_data(int fd, CpuData *data) {
+    const char *ptr = (const char *)data;
+    size_t remaining = sizeof(*data);
+
+    while (remaining > 0) {
+        ssize_t written = write(fd, ptr, remaining);
+
+        if (written < 0) {
+            if (errno == EINTR)
+                continue;
+
+            perror("write CPU FIFO");
+            return 1;
+        }
+
+        if (written == 0) {
+            fprintf(stderr, "FIFO write returned 0\n");
+            return 1;
+        }
+
+        ptr += written;
+        remaining -= written;
+    }
+
+    return 0;
+}
+
+
 int main(void) {
-    if (make_dir() != 0) {
+    int fifo_fd = open(CPU_FIFO_PATH, O_WRONLY);
+
+    if (fifo_fd == -1) {
+        perror("open CPU FIFO");
         return 1;
     }
 
     while (1) {
-        read_cpu();
+        CpuData data;
+
+        if (read_cpu(&data) != 0) {
+            close(fifo_fd);
+            return 1;
+        }
+
+        if (send_cpu_data(fifo_fd, &data) != 0) {
+            close(fifo_fd);
+            return 1;
+        }
+
         sleep(5);
     }
 
+    close(fifo_fd);
     return 0;
 }

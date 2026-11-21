@@ -1,5 +1,6 @@
+
 CC = gcc
-CFLAGS = -Wall -Wextra -g
+CFLAGS = -Wall -Wextra -g -I./inc
 
 SRC_DIR = src
 BIN_DIR = bin
@@ -9,7 +10,7 @@ TARGETS = $(BIN_DIR)/sysmond $(BIN_DIR)/mem_sensor \
 
 all: $(TARGETS)
 
-$(BIN_DIR)/%: $(SRC_DIR)/%.c | $(BIN_DIR)
+$(BIN_DIR)/%: $(SRC_DIR)/%.c inc/sysmon_ipc.h | $(BIN_DIR)
 	$(CC) $(CFLAGS) $< -o $@
 
 $(BIN_DIR):
