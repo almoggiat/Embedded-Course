@@ -96,7 +96,7 @@ int main(void) {
             return 1;
         }
 
-        sleep(5);
+        sleep(17);
     }
 
     close(fifo_fd);

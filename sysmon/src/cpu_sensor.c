@@ -82,7 +82,7 @@ int main(void) {
             return 1;
         }
 
-        sleep(5);
+        sleep(11);
     }
 
     close(fifo_fd);

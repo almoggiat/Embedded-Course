@@ -1,6 +1,6 @@
 
 CC = gcc
-CFLAGS = -Wall -Wextra -g -I./inc
+CFLAGS = -Wall -Wextra -g -I./inc -pthread
 
 SRC_DIR = src
 BIN_DIR = bin
