@@ -1,12 +1,11 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/stat.h>
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <string.h>
-#include <sysmon_ipc.h>
+#include <mqueue.h>
+#include "sysmon_ipc.h"
 
 
 int read_cpu(CpuData *data) {
@@ -33,28 +32,11 @@ int read_cpu(CpuData *data) {
 }
 
 
-int send_cpu_data(int fd, CpuData *data) {
-    const char *ptr = (const char *)data;
-    size_t remaining = sizeof(*data);
+int send_cpu_data(mqd_t queue, CpuData *data) {
 
-    while (remaining > 0) {
-        ssize_t written = write(fd, ptr, remaining);
-
-        if (written < 0) {
-            if (errno == EINTR)
-                continue;
-
-            perror("write CPU FIFO");
-            return 1;
-        }
-
-        if (written == 0) {
-            fprintf(stderr, "FIFO write returned 0\n");
-            return 1;
-        }
-
-        ptr += written;
-        remaining -= written;
+    if (mq_send(queue, (const char *)data, sizeof(*data), 0) == -1) {
+        perror("mq_send CPU");
+        return 1;
     }
 
     return 0;
@@ -62,10 +44,16 @@ int send_cpu_data(int fd, CpuData *data) {
 
 
 int main(void) {
-    int fifo_fd = open(CPU_FIFO_PATH, O_WRONLY);
 
-    if (fifo_fd == -1) {
-        perror("open CPU FIFO");
+    mqd_t queue = mq_open(CPU_QUEUE_NAME, O_WRONLY);
+    if (queue == (mqd_t)-1) {
+        perror("mq_open CPU_QUEUE_NAME");
+        return 1;
+    }
+
+    if (sizeof(CpuData) > 512) {
+        fprintf(stderr, "CpuData exceeds message queue size\n");
+        mq_close(queue);
         return 1;
     }
 
@@ -73,18 +61,19 @@ int main(void) {
         CpuData data;
 
         if (read_cpu(&data) != 0) {
-            close(fifo_fd);
+            mq_close(queue);
             return 1;
         }
 
-        if (send_cpu_data(fifo_fd, &data) != 0) {
-            close(fifo_fd);
+        if (send_cpu_data(queue, &data) != 0) {
+	  
+            mq_close(queue);
             return 1;
         }
 
         sleep(11);
     }
 
-    close(fifo_fd);
+    mq_close(queue);
     return 0;
 }

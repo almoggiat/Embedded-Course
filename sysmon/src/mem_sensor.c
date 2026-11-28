@@ -1,17 +1,16 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/stat.h>
 #include <errno.h>
 #include <unistd.h>
-#include <sys/types.h>
 #include <string.h>
-#include <signal.h>
+#include <fcntl.h>
+#include <mqueue.h>
 
 #include <sysmon_ipc.h>
 
 
-int read_mem(int pipe_fd) {
+int read_mem(mqd_t queue) {
     FILE *mem_file = fopen("/proc/meminfo", "r");
 
     if (mem_file == NULL) {
@@ -21,7 +20,7 @@ int read_mem(int pipe_fd) {
 
     MemData data = {0};
 
-    char line[256];
+    char line[512];
 
     while (fgets(line, sizeof(line), mem_file) != NULL) {
 
@@ -43,51 +42,34 @@ int read_mem(int pipe_fd) {
 
     fclose(mem_file);
 
-    // Send the entire structure through the pipe.
-    const char *ptr = (const char *)&data;
-    size_t remaining = sizeof(data);
-
-    while (remaining > 0) {
-        ssize_t written = write(pipe_fd, ptr, remaining);
-
-        if (written < 0) {
-            if (errno == EINTR)
-                continue;
-
-            perror("write pipe");
-            return 1;
-        }
-
-        if (written == 0) {
-            fprintf(stderr, "Pipe write returned 0\n");
-            return 1;
-        }
-
-        ptr += written;
-        remaining -= written;
+    if (mq_send(queue, (const char *)&data, sizeof(data), 0) == -1) {
+        perror("mq_send");
+        return 1;
     }
 
     return 0;
 }
 
 
-int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "Missing pipe descriptor\n");
+int main(void) {
+
+    mqd_t queue = mq_open(MEM_QUEUE_NAME, O_WRONLY);
+
+    if (queue == (mqd_t)-1) {
+        perror("mq_open MEM_QUEUE_NAME");
         return 1;
     }
 
-    int pipe_fd = atoi(argv[1]);
-
     while (1) {
-        if (read_mem(pipe_fd) != 0) {
-            close(pipe_fd);
+
+        if (read_mem(queue) != 0) {
+            mq_close(queue);
             return 1;
         }
 
         sleep(5);
     }
 
-    close(pipe_fd);
+    mq_close(queue);
     return 0;
 }

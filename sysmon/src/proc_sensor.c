@@ -1,13 +1,11 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <errno.h>
-#include <unistd.h>
 #include <dirent.h>
+#include <unistd.h>
 #include <fcntl.h>
-#include <sysmon_ipc.h>
+#include <mqueue.h>
+#include "sysmon_ipc.h"
 
 
 int is_digits(const char *str) {
@@ -21,7 +19,6 @@ int is_digits(const char *str) {
 
     return 1;
 }
-
 
 int read_proc(ProcData *data) {
     DIR *dir = opendir("/proc");
@@ -47,28 +44,11 @@ int read_proc(ProcData *data) {
 }
 
 
-int send_proc_data(int fd, ProcData *data) {
-    const char *ptr = (const char *)data;
-    size_t remaining = sizeof(*data);
+int send_proc_data(mqd_t queue, ProcData *data) {
 
-    while (remaining > 0) {
-        ssize_t written = write(fd, ptr, remaining);
-
-        if (written < 0) {
-            if (errno == EINTR)
-                continue;
-
-            perror("write PROC FIFO");
-            return 1;
-        }
-
-        if (written == 0) {
-            fprintf(stderr, "FIFO write returned 0\n");
-            return 1;
-        }
-
-        ptr += written;
-        remaining -= written;
+    if (mq_send(queue, (const char *)data, sizeof(*data), 0) == -1) {
+        perror("mq_send PROC");
+        return 1;
     }
 
     return 0;
@@ -76,10 +56,17 @@ int send_proc_data(int fd, ProcData *data) {
 
 
 int main(void) {
-    int fifo_fd = open(PROC_FIFO_PATH, O_WRONLY);
 
-    if (fifo_fd == -1) {
-        perror("open PROC FIFO");
+    mqd_t queue = mq_open(PROC_QUEUE_NAME, O_WRONLY);
+
+    if (queue == (mqd_t)-1) {
+        perror("mq_open PROC_QUEUE_NAME");
+        return 1;
+    }
+
+    if (sizeof(ProcData) > 512) {
+        fprintf(stderr, "ProcData exceeds message queue size\n");
+        mq_close(queue);
         return 1;
     }
 
@@ -87,18 +74,18 @@ int main(void) {
         ProcData data;
 
         if (read_proc(&data) != 0) {
-            close(fifo_fd);
+            mq_close(queue);
             return 1;
         }
 
-        if (send_proc_data(fifo_fd, &data) != 0) {
-            close(fifo_fd);
+        if (send_proc_data(queue, &data) != 0) {
+            mq_close(queue);
             return 1;
         }
 
         sleep(17);
     }
 
-    close(fifo_fd);
+    mq_close(queue);
     return 0;
 }
